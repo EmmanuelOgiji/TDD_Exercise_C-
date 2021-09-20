@@ -1,0 +1,62 @@
+#  Template .NET Core build
+
+#  This template allows you to validate your .NET Core package.
+#  The workflow allows running tests and code linting on the default branch.
+
+image: mcr.microsoft.com/dotnet/core/sdk:2.2
+
+pipelines:
+  pull-requests:
+    '**':
+      - step:
+          name: Build Code
+          caches:
+            - dotnetcore
+          script:
+            - dotnet restore
+            - dotnet build ShoppingCartModel --no-restore --configuration Release
+      - step:
+          name: Build and Run Unit Tests
+          caches:
+            - dotnetcore
+          script:
+            - cd ShoppingCartModelTests
+            - REPORTS_PATH=./test-reports/build_${BITBUCKET_BUILD_NUMBER}
+            - dotnet restore
+            - dotnet build --no-restore --configuration Release
+            - dotnet test --no-build --configuration Release --test-adapter-path:. --logger:"junit;LogFilePath=$REPORTS_PATH/junit.xml" 
+      - step:
+          name: Lint the code
+          caches:
+            - dotnetcore
+          script:
+            - echo "Linting Code"
+            - cd ShoppingCartModel
+            - dotnet tool install --global dotnet-format --version 3.1.37601
+            - export PATH="$PATH:/root/.dotnet/tools"
+            - dotnet format --check --verbosity diagnostic       
+      - step:
+         name: Build and Push Image
+         services:
+           - docker
+         script:
+          - echo "Installing AWS CLI"
+          - curl "https://s3.amazonaws.com/aws-cli/awscli-bundle.zip" -o "awscli-bundle.zip"
+          - apt-get update -y
+          - apt-get install -y unzip
+          - unzip awscli-bundle.zip
+          - ./awscli-bundle/install -i /usr/local/aws -b /usr/local/bin/aws
+          - aws --version
+          - echo "Building Docker Image"
+          - export BUILD_ID=$BITBUCKET_BRANCH_$BITBUCKET_COMMIT_$BITBUCKET_BUILD_NUMBER
+          - export ECR="680558138144.dkr.ecr.eu-west-1.amazonaws.com"
+          - echo "Getting ECR login"
+          - aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin ${ECR}
+          - cd ShoppingCartModel
+          - echo "Building Shopping Cart Image"
+          - docker build -t shoppingcartimages:${BUILD_ID} .
+          - echo "Tag docker image"
+          - docker tag shoppingcartimages:${BUILD_ID} ${ECR}/shoppingcartimages:${BUILD_ID}
+          - echo "Push image"
+          - docker push ${ECR}/shoppingcartimages:${BITBUCKET_BUILD_NUMBER}
+            
